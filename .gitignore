@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build output
+dist/
+build/
+*.egg-info/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+test.db
+
+# Test
+.pytest_cache/
+coverage/
+htmlcov/
+
+# Logs
+*.log
+*.log.*
+
+# Uploads
+uploads/
+
+# Misc
+*.tsbuildinfo
