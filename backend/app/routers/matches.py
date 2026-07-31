@@ -15,8 +15,16 @@ from app.models.odds import OddsHistory
 from app.models.injury import Injury
 from app.models.prediction import Prediction
 from app.models.briefing import Briefing
-from app.models.jingcai import JingcaiMatch, JingcaiOdds
-from app.schemas.match import MatchOut, BettingResponse, BettingMatchOut, BetOptionOut, MatchComparisonOut, TeamComparisonOut
+from app.models.jingcai import (
+    JingcaiMatch, JingcaiTeam, JingcaiLeague, JingcaiOdds,
+    JingcaiOddsSpf, JingcaiOddsRqspf, JingcaiOddsCrs, JingcaiOddsTtg, JingcaiOddsHafu,
+    JingcaiStanding, JingcaiH2h, JingcaiRecentResult, JingcaiInjury, JingcaiSeasonFeature,
+)
+from app.schemas.match import (
+    MatchOut, BettingResponse, BettingMatchOut, BetOptionOut,
+    MatchComparisonOut, TeamComparisonOut,
+    StandingSnapshotOut, MatchStandingsOut, MatchDetailOut,
+)
 from app.schemas.odds import OddsItemOut, OddsHistoryOut, OddsHistoryPointOut
 from app.schemas.analysis import PredictionOut, BriefingOut, H2HRecordOut, TeamFormOut, FormResultOut, MatchInjuriesOut, InjuryPlayerOut
 from app.schemas.team import StandingOut
@@ -201,25 +209,316 @@ def list_matches(
     return out
 
 
-@router.get("/matches/{match_id}", response_model=MatchOut)
+# ── Jingcai detail helpers ─────────────────────────────────────────
+def _jc_match_out(m: JingcaiMatch) -> MatchOut:
+    return MatchOut(
+        id=m.match_id,
+        home_team=m.home_team,
+        away_team=m.away_team,
+        home_score=m.home_score,
+        away_score=m.away_score,
+        half_score=None,
+        match_time=m.kickoff_time or datetime.combine(m.match_date or m.business_date, datetime.min.time()),
+        status=m.status,
+        league=m.league or "未知",
+        league_id=m.sporttery_league_id or 0,
+        home_team_id=m.sporttery_home_id or 0,
+        away_team_id=m.sporttery_away_id or 0,
+    )
+
+
+def _jc_team_name(db: Session, uniform_id: int | None) -> str:
+    if not uniform_id:
+        return "未知"
+    t = db.query(JingcaiTeam).filter(JingcaiTeam.uniform_id == uniform_id).first()
+    return t.name if t else str(uniform_id)
+
+
+def _jc_standings(db: Session, match_id: int) -> MatchStandingsOut:
+    rows = db.query(JingcaiStanding).filter(JingcaiStanding.match_id == match_id).all()
+    home, away = [], []
+    for r in rows:
+        snap = StandingSnapshotOut(
+            view=r.view,
+            team_name=r.team_name or "",
+            position=r.ranking,
+            points=r.points,
+            played=r.played,
+            wins=r.wins,
+            draws=r.draws,
+            losses=r.losses,
+            goals_for=r.goals_for,
+            goals_against=r.goals_against,
+            goal_diff=r.goal_diff,
+        )
+        if r.team_type == "home":
+            home.append(snap)
+        elif r.team_type == "away":
+            away.append(snap)
+    return MatchStandingsOut(home=home, away=away)
+
+
+def _stat_from_results(results: list[JingcaiRecentResult], team_uid: int, recent_only: bool = False) -> dict:
+    wins = draws = losses = gf = ga = 0
+    for r in results:
+        is_home = r.home_score is not None and r.result == "win" and r.home_score > (r.away_score or 0)
+        is_away = r.away_score is not None and r.result == "win" and r.away_score > (r.home_score or 0)
+        if r.result == "win":
+            wins += 1
+            gf += max(r.home_score or 0, r.away_score or 0)
+            ga += min(r.home_score or 0, r.away_score or 0)
+        elif r.result == "loss":
+            losses += 1
+            gf += min(r.home_score or 0, r.away_score or 0)
+            ga += max(r.home_score or 0, r.away_score or 0)
+        elif r.result == "draw":
+            draws += 1
+            gf += r.home_score or 0
+            ga += r.home_score or 0
+    played = wins + draws + losses
+    return {
+        "played": played,
+        "wins": wins,
+        "draws": draws,
+        "losses": losses,
+        "goals_for": gf,
+        "goals_against": ga,
+        "goal_diff": gf - ga,
+        "points": wins * 3 + draws,
+        "win_rate": round(wins / max(played, 1) * 100, 1),
+    }
+
+
+def _jc_comparison(db: Session, match_id: int, m: JingcaiMatch) -> MatchComparisonOut:
+    home_uid = m.uniform_home_id
+    away_uid = m.uniform_away_id
+    standings = _jc_standings(db, match_id)
+    home_rank = next((s.position for s in standings.home if s.view == "total"), None)
+    away_rank = next((s.position for s in standings.away if s.view == "total"), None)
+
+    def build(uid: int | None, rank: int | None):
+        team_name = _jc_team_name(db, uid)
+        results = []
+        if uid is not None:
+            results = db.query(JingcaiRecentResult).filter(
+                JingcaiRecentResult.team_uniform_id == uid,
+            ).order_by(JingcaiRecentResult.match_date.desc()).limit(20).all()
+        recent6 = results[:6]
+        total = _stat_from_results(results, uid)
+        recent = _stat_from_results(recent6, uid)
+        league_label = f"[{m.league or ''}-{rank}]" if rank else (f"[{m.league or ''}]" if m.league else "")
+        return {
+            "league_label": league_label,
+            "team_name": team_name,
+            "fulltime": {
+                "total": total, "home": total, "away": total, "recent6": recent,
+            },
+            "halftime": {
+                "total": total, "home": total, "away": total, "recent6": recent,
+            },
+        }
+
+    return MatchComparisonOut(
+        match_id=match_id,
+        home=TeamComparisonOut(**build(home_uid, home_rank)),
+        away=TeamComparisonOut(**build(away_uid, away_rank)),
+    )
+
+
+def _jc_form(db: Session, m: JingcaiMatch) -> dict:
+    def build(uid: int | None):
+        if uid is None:
+            return TeamFormOut(team_id=0, team_name="未知", results=[])
+        results = db.query(JingcaiRecentResult).filter(
+            JingcaiRecentResult.team_uniform_id == uid,
+        ).order_by(JingcaiRecentResult.match_date.desc()).limit(10).all()
+        out = []
+        for r in results:
+            result = {"win": "W", "draw": "D", "loss": "L"}.get(r.result, "D")
+            home = (r.home_score or 0) > (r.away_score or 0)
+            if r.result == "win":
+                home = r.home_score is not None and r.home_score > (r.away_score or 0)
+                score = f"{r.home_score}:{r.away_score}" if r.home_score is not None else "-:-"
+            elif r.result == "loss":
+                score = f"{r.home_score}:{r.away_score}" if r.home_score is not None else "-:-"
+            else:
+                score = f"{r.home_score}:{r.away_score}" if r.home_score is not None else "-:-"
+            out.append(FormResultOut(
+                match_id=r.source_match_id or r.id,
+                result=result,
+                home=home,
+                opponent=_jc_team_name(db, r.opponent_uniform_id),
+                score=score,
+                match_time=datetime.combine(r.match_date or m.match_date or m.business_date, datetime.min.time()),
+            ))
+        return TeamFormOut(team_id=uid, team_name=_jc_team_name(db, uid), results=out)
+
+    return {
+        "home": build(m.uniform_home_id),
+        "away": build(m.uniform_away_id),
+    }
+
+
+def _jc_h2h(db: Session, match_id: int) -> list[H2HRecordOut]:
+    rows = db.query(JingcaiH2h).filter(JingcaiH2h.match_id == match_id).all()
+    out = []
+    for r in rows:
+        out.append(H2HRecordOut(
+            match_id=r.id,
+            home_team=_jc_team_name(db, r.home_team_id),
+            away_team=_jc_team_name(db, r.away_team_id),
+            home_score=r.home_score,
+            away_score=r.away_score,
+            match_time=datetime.combine(r.match_date or datetime.now().date(), datetime.min.time()),
+            league="历史交锋",
+        ))
+    return out
+
+
+def _jc_injuries(db: Session, match_id: int) -> MatchInjuriesOut:
+    rows = db.query(JingcaiInjury).filter(JingcaiInjury.match_id == match_id).all()
+    home, away = [], []
+    for r in rows:
+        tag = None
+        if r.suspension_flag:
+            tag = "停赛"
+        elif r.injury_flag:
+            tag = "伤病"
+        p = InjuryPlayerOut(name=r.person_name or "未知", position=r.position_desc or "", tag=tag)
+        if r.team_type == "home":
+            home.append(p)
+        elif r.team_type == "away":
+            away.append(p)
+    return MatchInjuriesOut(match_id=match_id, home=home, away=away)
+
+
+def _jc_odds(db: Session, match_id: int) -> dict:
+    odds_rows = db.query(JingcaiOdds).filter(JingcaiOdds.match_id == match_id).all()
+    by_type = {o.odds_type: o for o in odds_rows}
+
+    def _current(odds_type: str):
+        latest = by_type.get(odds_type)
+        if not latest:
+            return None
+        model = {"SPF": JingcaiOddsSpf, "RQSPF": JingcaiOddsRqspf}.get(odds_type)
+        initial = None
+        if model:
+            initial = db.query(model).filter(model.match_id == match_id).order_by(model.snapshot_at.asc()).first()
+        return {
+            "odds_type": odds_type,
+            "initial_home": getattr(initial, "home", None),
+            "initial_draw": getattr(initial, "draw", None),
+            "initial_away": getattr(initial, "away", None),
+            "current_home": latest.home,
+            "current_draw": latest.draw,
+            "current_away": latest.away,
+            "update_time": latest.snapshot_at,
+        }
+
+    def _history(model, odds_type: str, has_handicap: bool = False):
+        records = db.query(model).filter(model.match_id == match_id).order_by(model.snapshot_at.asc()).all()
+        out = []
+        for r in records:
+            opts = None
+            options_attr = getattr(r, "options", None)
+            if options_attr:
+                try:
+                    parsed = json.loads(options_attr)
+                    if isinstance(parsed, list):
+                        opts = {it["label"]: it.get("odds") for it in parsed if isinstance(it, dict) and "label" in it}
+                    elif isinstance(parsed, dict):
+                        opts = parsed
+                except Exception:
+                    opts = None
+            out.append(OddsHistoryPointOut(
+                time=r.snapshot_at,
+                home=getattr(r, "home", None),
+                draw=getattr(r, "draw", None),
+                away=getattr(r, "away", None),
+                handicap=getattr(r, "handicap", None) if has_handicap else None,
+                options=opts,
+            ))
+        return out
+
+    current = []
+    for t in ("SPF", "RQSPF"):
+        c = _current(t)
+        if c:
+            current.append(OddsItemOut(
+                id=len(current) + 1,
+                match_id=match_id,
+                bookmaker="竞彩",
+                odds_type=c["odds_type"],
+                initial_home=c["initial_home"],
+                initial_draw=c["initial_draw"],
+                initial_away=c["initial_away"],
+                current_home=c["current_home"],
+                current_draw=c["current_draw"],
+                current_away=c["current_away"],
+                update_time=c["update_time"] or datetime.now(),
+            ))
+
+    return {
+        "current": current,
+        "history": {
+            "SPF": _history(JingcaiOddsSpf, "SPF"),
+            "RQSPF": _history(JingcaiOddsRqspf, "RQSPF", has_handicap=True),
+            "BF": _history(JingcaiOddsCrs, "BF"),
+            "ZJQ": _history(JingcaiOddsTtg, "ZJQ"),
+            "BQC": _history(JingcaiOddsHafu, "BQC"),
+        },
+    }
+
+
+@router.get("/matches/{match_id}", response_model=MatchDetailOut)
 def get_match(match_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    jm = db.query(JingcaiMatch).filter(JingcaiMatch.match_id == match_id).first()
+    if jm:
+        return MatchDetailOut(
+            match=_jc_match_out(jm),
+            standings=_jc_standings(db, match_id),
+            comparison=_jc_comparison(db, match_id, jm),
+            form=_jc_form(db, jm),
+            h2h=_jc_h2h(db, match_id),
+            injuries=_jc_injuries(db, match_id),
+            odds=_jc_odds(db, match_id),
+            prediction=None,
+            briefing=None,
+            sentiment=None,
+        )
+
     m = db.query(Match).filter(Match.id == match_id).first()
     if not m:
         raise HTTPException(status_code=404, detail="Match not found")
     half = f"{m.half_home_score}:{m.half_away_score}" if m.half_home_score is not None else None
-    return MatchOut(
-        id=m.id,
-        home_team=_tn(db, m.home_team_id),
-        away_team=_tn(db, m.away_team_id),
-        home_score=m.home_score,
-        away_score=m.away_score,
-        half_score=half,
-        match_time=m.match_time,
-        status=m.status,
-        league=_ln(db, m.league_id),
-        league_id=m.league_id,
-        home_team_id=m.home_team_id,
-        away_team_id=m.away_team_id,
+    return MatchDetailOut(
+        match=MatchOut(
+            id=m.id,
+            home_team=_tn(db, m.home_team_id),
+            away_team=_tn(db, m.away_team_id),
+            home_score=m.home_score,
+            away_score=m.away_score,
+            half_score=half,
+            match_time=m.match_time,
+            status=m.status,
+            league=_ln(db, m.league_id),
+            league_id=m.league_id,
+            home_team_id=m.home_team_id,
+            away_team_id=m.away_team_id,
+        ),
+        standings=MatchStandingsOut(home=[], away=[]),
+        comparison=MatchComparisonOut(
+            match_id=match_id,
+            home=TeamComparisonOut(league_label="", team_name="", fulltime={}, halftime={}),
+            away=TeamComparisonOut(league_label="", team_name="", fulltime={}, halftime={}),
+        ),
+        form={"home": TeamFormOut(team_id=0, team_name="", results=[]), "away": TeamFormOut(team_id=0, team_name="", results=[])},
+        h2h=[],
+        injuries=MatchInjuriesOut(match_id=match_id, home=[], away=[]),
+        odds={"current": [], "history": {"SPF": [], "RQSPF": [], "BF": [], "ZJQ": [], "BQC": []}},
+        prediction=None,
+        briefing=None,
+        sentiment=None,
     )
 
 

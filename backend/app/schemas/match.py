@@ -1,6 +1,9 @@
 from datetime import datetime
 from pydantic import BaseModel
 
+from app.schemas.odds import OddsHistoryPointOut
+from app.schemas.analysis import H2HRecordOut, MatchInjuriesOut, PredictionOut, BriefingOut
+
 
 class MatchOut(BaseModel):
     id: int
@@ -61,3 +64,35 @@ class MatchComparisonOut(BaseModel):
     match_id: int
     home: TeamComparisonOut
     away: TeamComparisonOut
+
+
+class StandingSnapshotOut(BaseModel):
+    view: str
+    team_name: str
+    position: int | None
+    points: int | None
+    played: int | None
+    wins: int | None
+    draws: int | None
+    losses: int | None
+    goals_for: int | None
+    goals_against: int | None
+    goal_diff: int | None
+
+
+class MatchStandingsOut(BaseModel):
+    home: list[StandingSnapshotOut]
+    away: list[StandingSnapshotOut]
+
+
+class MatchDetailOut(BaseModel):
+    match: MatchOut
+    standings: MatchStandingsOut
+    comparison: MatchComparisonOut
+    form: dict
+    h2h: list[H2HRecordOut]
+    injuries: MatchInjuriesOut
+    odds: dict
+    prediction: PredictionOut | None
+    briefing: BriefingOut | None
+    sentiment: None

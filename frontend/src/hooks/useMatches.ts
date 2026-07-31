@@ -9,10 +9,11 @@ export function useMatches(params?: MatchListParams) {
   })
 }
 
-export function useMatch(id: number) {
+export function useMatchDetail(id: number) {
   return useQuery({
-    queryKey: ["match", id],
+    queryKey: ["match-detail", id],
     queryFn: () => matchesApi.getById(id),
     enabled: !!id,
+    staleTime: 300_000,
   })
 }

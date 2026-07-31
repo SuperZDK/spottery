@@ -21,6 +21,7 @@ export function useStandings(leagueId: number) {
     queryKey: ["standings", leagueId],
     queryFn: () => teamsApi.getStandings(leagueId),
     enabled: !!leagueId,
+    staleTime: 300_000,
   })
 }
 
