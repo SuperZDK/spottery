@@ -1,5 +1,6 @@
 ﻿import { useState } from "react"
 import { useParams } from "react-router-dom"
+import { SearchX } from "lucide-react"
 import { useMatch } from "@/hooks/useMatches"
 import { useOdds, useOddsHistory } from "@/hooks/useOdds"
 import { usePrediction, useTeamForm, useH2H, useBriefing, useMatchComparison, useMatchInjuries } from "@/hooks/useAnalysis"
@@ -7,7 +8,7 @@ import { useStandings } from "@/hooks/useTeams"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table"
-import LoadingSpinner from "@/components/shared/LoadingSpinner"
+import MatchDetailSkeleton from "@/components/shared/MatchDetailSkeleton"
 import { MATCH_STATUS } from "@/lib/constants"
 import type { OddsItem, OddsHistoryPoint } from "@/types/odds"
 import type { Standing, StatRow } from "@/types/team"
@@ -461,8 +462,19 @@ export default function MatchDetailPage() {
   const { data: yapanHistory } = useOddsHistory(matchId, "RQSPF", yapanBookmaker, oddsSubTab === "yapan")
   const { data: oupelHistory } = useOddsHistory(matchId, "SPF", oupeiBookmaker, oddsSubTab === "oupei")
 
-  if (matchLoading) return <LoadingSpinner />
-  if (!match) return <p className="text-destructive">赛事不存在</p>
+  if (matchLoading) return <MatchDetailSkeleton />
+  if (!match) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
+        <div className="text-4xl"><SearchX className="mx-auto h-10 w-10 text-muted-foreground" /></div>
+        <p className="text-sm font-medium">赛事不存在</p>
+        <p className="text-xs text-muted-foreground">该比赛可能尚未导入或已被移除</p>
+        <a href="/matches" className="mt-2 inline-flex items-center rounded-md border bg-background px-4 py-2 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-muted">
+          返回赛事列表
+        </a>
+      </div>
+    )
+  }
 
   const standingRows = standings ?? []
   const homeStanding = standingRows.find((s: Standing) => s.team_id === match.home_team_id)
