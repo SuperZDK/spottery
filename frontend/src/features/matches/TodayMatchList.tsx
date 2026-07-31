@@ -71,7 +71,13 @@ function nearbyDates(center: string, count: number): string[] {
   return result
 }
 
-const BASE_DATE = "2026-07-21"
+function todayString(): string {
+  const d = new Date()
+  const off = d.getTimezoneOffset() * 60000
+  return new Date(d.getTime() - off).toISOString().slice(0, 10)
+}
+
+const BASE_DATE = todayString()
 
 function fetchBetting(date: string) {
   return fetch(`/api/v1/matches/betting?date=${date}`).then<BettingResponse>((r) => r.json())

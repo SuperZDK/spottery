@@ -45,3 +45,9 @@ uploads/
 
 # Misc
 *.tsbuildinfo
+
+# AI tooling
+.agents/
+.opencode/
+opencode.json
+skills-lock.json

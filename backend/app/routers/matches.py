@@ -15,6 +15,7 @@ from app.models.odds import OddsHistory
 from app.models.injury import Injury
 from app.models.prediction import Prediction
 from app.models.briefing import Briefing
+from app.models.jingcai import JingcaiMatch, JingcaiOdds
 from app.schemas.match import MatchOut, BettingResponse, BettingMatchOut, BetOptionOut, MatchComparisonOut, TeamComparisonOut
 from app.schemas.odds import OddsItemOut, OddsHistoryOut, OddsHistoryPointOut
 from app.schemas.analysis import PredictionOut, BriefingOut, H2HRecordOut, TeamFormOut, FormResultOut, MatchInjuriesOut, InjuryPlayerOut
@@ -98,67 +99,61 @@ def get_standings(league_id: int, db: Session = Depends(get_db)):
 
 
 # ── Betting (public) ────────────────────────────────────────────────
-def _get_latest_odds(match_id: int, db: Session) -> tuple:
-    latest = db.query(OddsHistory).filter(
-        OddsHistory.match_id == match_id,
-    ).order_by(OddsHistory.snapshot_at.desc()).all()
-
-    spf = {"home": None, "draw": None, "away": None}
-    rqspf = {"handicap": None, "home": None, "draw": None, "away": None}
-    bf = []
-    zjq = []
-    bqc = []
-
-    for o in latest:
-        if o.bookmaker == "竞彩":
-            if o.odds_type == "SPF" and spf["home"] is None:
-                spf = {"home": o.home_odds, "draw": o.draw_odds, "away": o.away_odds}
-            elif o.odds_type == "RQSPF" and rqspf["home"] is None:
-                rqspf = {"handicap": o.handicap, "home": o.home_odds, "draw": o.draw_odds, "away": o.away_odds}
-            elif o.odds_type == "BF" and not bf:
-                if o.options:
-                    bf = [{"label": k, "odds": v} for k, v in json.loads(o.options).items()]
-            elif o.odds_type == "ZJQ" and not zjq:
-                if o.options:
-                    zjq = [{"label": k, "odds": v} for k, v in json.loads(o.options).items()]
-            elif o.odds_type == "BQC" and not bqc:
-                if o.options:
-                    bqc = [{"label": k, "odds": v} for k, v in json.loads(o.options).items()]
-
-    return spf, rqspf, bf, zjq, bqc
-
-
 @router.get("/matches/betting", response_model=BettingResponse)
 def betting_matches(date_str: str | None = Query(None, alias="date"), db: Session = Depends(get_db)):
     target = date.fromisoformat(date_str) if date_str else date.today()
     weekday = WEEKDAYS_CN[target.weekday()]
 
-    matches = db.query(Match).filter(
-        func.date(Match.match_time) == target.isoformat(),
-        Match.status.in_(["SCHEDULED", "LIVE"]),
-    ).all()
+    rows = db.query(JingcaiMatch).filter(
+        JingcaiMatch.business_date == target,
+    ).order_by(JingcaiMatch.match_num.asc()).all()
+
+    odds_by_match: dict[int, dict[str, JingcaiOdds]] = {}
+    if rows:
+        for o in db.query(JingcaiOdds).filter(
+            JingcaiOdds.match_id.in_([m.match_id for m in rows]),
+        ).all():
+            odds_by_match.setdefault(o.match_id, {})[o.odds_type] = o
 
     result = []
-    for i, m in enumerate(matches):
-        spf, rqspf, bf, zjq, bqc = _get_latest_odds(m.id, db)
+    for m in rows:
+        odds = odds_by_match.get(m.match_id, {})
+        spf_row = odds.get("SPF")
+        if not spf_row or (spf_row.home is None and spf_row.draw is None and spf_row.away is None):
+            continue
+        rqspf_row = odds.get("RQSPF")
+
+        def _opts(o: JingcaiOdds | None) -> list[BetOptionOut]:
+            if not o or not o.options:
+                return []
+            try:
+                return [BetOptionOut(**it) for it in json.loads(o.options)]
+            except (TypeError, ValueError):
+                return []
+
         result.append(BettingMatchOut(
-            match_id=m.id,
-            home_team=_tn(db, m.home_team_id),
-            away_team=_tn(db, m.away_team_id),
-            match_time=m.match_time,
-            league=_ln(db, m.league_id),
-            league_id=m.league_id or 0,
+            match_id=m.match_id,
+            home_team=m.home_team,
+            away_team=m.away_team,
+            match_time=m.kickoff_time or datetime.combine(m.match_date or m.business_date, datetime.min.time()),
+            league=m.league or "未知",
+            league_id=m.sporttery_league_id or 0,
             status=m.status,
-            home_team_id=m.home_team_id or 0,
-            away_team_id=m.away_team_id or 0,
+            home_team_id=m.sporttery_home_id or 0,
+            away_team_id=m.sporttery_away_id or 0,
             home_score=m.home_score,
             away_score=m.away_score,
-            betting_code=f"{weekday}{str(i + 1).zfill(3)}",
-            spf=spf,
-            rqspf=rqspf,
-            bf=[BetOptionOut(**b) for b in bf],
-            zjq=[BetOptionOut(**b) for b in zjq],
-            bqc=[BetOptionOut(**b) for b in bqc],
+            betting_code=m.match_num or f"{weekday}{str(len(result) + 1).zfill(3)}",
+            spf={"home": spf_row.home, "draw": spf_row.draw, "away": spf_row.away},
+            rqspf={
+                "handicap": rqspf_row.handicap if rqspf_row else None,
+                "home": rqspf_row.home if rqspf_row else None,
+                "draw": rqspf_row.draw if rqspf_row else None,
+                "away": rqspf_row.away if rqspf_row else None,
+            },
+            bf=_opts(odds.get("CRS")),
+            zjq=_opts(odds.get("TTG")),
+            bqc=_opts(odds.get("HAFU")),
         ))
 
     return BettingResponse(date=target.isoformat(), weekday=weekday, matches=result)

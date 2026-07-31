@@ -13,7 +13,7 @@ router = APIRouter(prefix="/internal", tags=["internal"])
 
 
 def _verify_internal_token(x_internal_token: str = Header(...)):
-    if x_internal_token != settings.jwt_secret_key:
+    if x_internal_token != settings.internal_api_key:
         raise HTTPException(status_code=403, detail="Invalid internal token")
     return True
 

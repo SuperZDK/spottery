@@ -6,6 +6,25 @@ from app.models.odds import OddsHistory
 from app.models.injury import Injury
 from app.models.prediction import Prediction
 from app.models.briefing import Briefing
+from app.models.jingcai import (
+    JingcaiMatch,
+    JingcaiTeam,
+    JingcaiLeague,
+    JingcaiOdds,
+    JingcaiOddsSpf,
+    JingcaiOddsRqspf,
+    JingcaiOddsCrs,
+    JingcaiOddsTtg,
+    JingcaiOddsHafu,
+    JingcaiPool,
+    JingcaiStanding,
+    JingcaiH2h,
+    JingcaiRecentResult,
+    JingcaiFixture,
+    JingcaiInjury,
+    JingcaiPlayer,
+    JingcaiSeasonFeature,
+)
 
 __all__ = [
     "User",
@@ -18,4 +37,21 @@ __all__ = [
     "Injury",
     "Prediction",
     "Briefing",
+    "JingcaiMatch",
+    "JingcaiTeam",
+    "JingcaiLeague",
+    "JingcaiOdds",
+    "JingcaiOddsSpf",
+    "JingcaiOddsRqspf",
+    "JingcaiOddsCrs",
+    "JingcaiOddsTtg",
+    "JingcaiOddsHafu",
+    "JingcaiPool",
+    "JingcaiStanding",
+    "JingcaiH2h",
+    "JingcaiRecentResult",
+    "JingcaiFixture",
+    "JingcaiInjury",
+    "JingcaiPlayer",
+    "JingcaiSeasonFeature",
 ]
