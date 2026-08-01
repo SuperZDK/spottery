@@ -53,3 +53,9 @@ def require_vip(user: User = Depends(get_current_user)) -> User:
     if user.role not in ("VIP", "ADMIN"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="VIP required")
     return user
+
+
+def require_admin(user: User = Depends(get_current_user)) -> User:
+    if user.role != "ADMIN":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin required")
+    return user

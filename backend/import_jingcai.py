@@ -36,11 +36,13 @@ from app.models.jingcai import (
     JingcaiInjury,
     JingcaiPlayer,
     JingcaiSeasonFeature,
+    JingcaiImportFile,
 )
+from app.config import settings
 
 log = logging.getLogger("import_jingcai")
 
-DEFAULT_DATA_DIR = r"D:\data\VSCode_file\vscode_file\spottery\scrapers\data\jingcai"
+DEFAULT_DATA_DIR = settings.jingcai_data_dir
 
 STATUS_MAP = {"Payout": "FINISHED", "Refund": "FINISHED", "OddsIn": "SCHEDULED"}
 
@@ -217,15 +219,63 @@ def _upsert(db, model, rows, index_elements, chunk=500):
         db.execute(stmt, rows[i:i + chunk])
 
 
+# ---------- incremental fingerprints ----------
+def _load_fingerprints(db, directory):
+    """Return {absolute_path: (size, mtime)} for files under `directory`."""
+    out = {}
+    for row in db.query(JingcaiImportFile).all():
+        if row.file_path.startswith(directory):
+            out[row.file_path] = (row.size, row.mtime)
+    return out
+
+
+def _scan_files(files, fingerprints, incremental):
+    """Return [(path, size, mtime)] to process. Incremental skips unchanged files."""
+    out = []
+    for f in files:
+        try:
+            st = os.stat(f)
+        except OSError:
+            continue
+        if incremental:
+            fp = fingerprints.get(f)
+            if fp and fp[0] == st.st_size and fp[1] == st.st_mtime:
+                continue
+        out.append((f, st.st_size, st.st_mtime))
+    return out
+
+
+def _record_fingerprints(db, marks):
+    """marks: [(path, size, mtime)] upserted as ok fingerprints (imported_at untouched)."""
+    if not marks:
+        return
+    ins = sqlite_insert(JingcaiImportFile)
+    set_cols = {"size": ins.excluded.size, "mtime": ins.excluded.mtime,
+                "status": ins.excluded.status}
+    stmt = ins.on_conflict_do_update(index_elements=["file_path"], set_=set_cols)
+    rows = [{"file_path": p, "size": s, "mtime": m, "status": "ok"} for p, s, m in marks]
+    for i in range(0, len(rows), 500):
+        db.execute(stmt, rows[i:i + 500])
+
+
 # ---------- phase A: daily ----------
-def _phase_a(db, daily_dir, max_files=0):
+def _phase_a(db, daily_dir, max_files=0, incremental=False, progress=None, should_stop=None):
     files = sorted(glob_join(daily_dir, "*.json"))
     if max_files:
         files = files[:max_files]
+    fingerprints = _load_fingerprints(db, daily_dir) if incremental else {}
+    scanned = _scan_files(files, fingerprints, incremental)
+    total = len(scanned)
+    if progress:
+        progress("scan", 0, len(files))
+        progress("import", 0, total)
     teams, leagues = {}, {}
     match_rows, odds_rows, spf_rows, rqspf_rows = [], [], [], []
+    fmarks = []
 
-    for idx, f in enumerate(files):
+    for done, (f, fsize, fmtime) in enumerate(scanned, 1):
+        if should_stop and should_stop():
+            break
         try:
             with open(f, encoding="utf-8") as fh:
                 d = json.load(fh)
@@ -273,14 +323,18 @@ def _phase_a(db, daily_dir, max_files=0):
                 odds_rows.append({"match_id": mid, "odds_type": "RQSPF", "snapshot_at": scraped_dt,
                                   "home": rq["home"], "draw": rq["draw"], "away": rq["away"],
                                   "handicap": rq["handicap"]})
-        if (idx + 1) % 500 == 0:
-            log.info("A: %d/%d files", idx + 1, len(files))
+        fmarks.append((f, fsize, fmtime))
+        if progress:
+            progress("import", done, total)
+        if done % 500 == 0:
+            log.info("A: %d/%d files", done, total)
 
     _flush_dict_tables(db, teams, leagues)
     _upsert(db, JingcaiMatch, match_rows, ("match_id",))
     _upsert(db, JingcaiOdds, odds_rows, ("match_id", "odds_type"))
     _upsert(db, JingcaiOddsSpf, spf_rows, ("match_id", "snapshot_at"))
     _upsert(db, JingcaiOddsRqspf, rqspf_rows, ("match_id", "snapshot_at"))
+    _record_fingerprints(db, fmarks)
     db.commit()
     log.info("A done: matches=%d odds=%d spf=%d rqspf=%d",
              len(match_rows), len(odds_rows), len(spf_rows), len(rqspf_rows))
@@ -355,10 +409,16 @@ def _merge_league(leagues, name, sporttery_id=None, uniform_id=None,
     return l_
 
 
-def _phase_b(db, matches_dir, max_files=0):
+def _phase_b(db, matches_dir, max_files=0, incremental=False, progress=None, should_stop=None):
     files = sorted(glob_join(matches_dir, "*.json"))
     if max_files:
         files = files[:max_files]
+    fingerprints = _load_fingerprints(db, matches_dir) if incremental else {}
+    scanned = _scan_files(files, fingerprints, incremental)
+    total = len(scanned)
+    if progress:
+        progress("scan", 0, len(files))
+        progress("import", 0, total)
 
     # preserve teams/leagues already in the DB from phase A
     teams = {}
@@ -380,6 +440,7 @@ def _phase_b(db, matches_dir, max_files=0):
     spf_rows, rqspf_rows, crs_rows, ttg_rows, hafu_rows = [], [], [], [], []
     pool_rows, standing_rows, h2h_rows = [], [], []
     recent_rows, fixture_rows, injury_rows, player_rows, season_rows = [], [], [], [], []
+    fmarks = []
     totals = {"odds": 0, "spf": 0, "rqspf": 0, "crs": 0, "ttg": 0, "hafu": 0,
               "pools": 0, "standings": 0, "h2h": 0, "recent": 0, "fixtures": 0,
               "injuries": 0, "players": 0, "season": 0}
@@ -413,7 +474,9 @@ def _phase_b(db, matches_dir, max_files=0):
             lst.clear()
         match_rows.clear()
 
-    for idx, f in enumerate(files):
+    for done, (f, fsize, fmtime) in enumerate(scanned, 1):
+        if should_stop and should_stop():
+            break
         mid = int(os.path.splitext(os.path.basename(f))[0])
         try:
             with open(f, encoding="utf-8") as fh:
@@ -692,13 +755,17 @@ def _phase_b(db, matches_dir, max_files=0):
                 "data": json.dumps(sf, ensure_ascii=False),
             })
 
-        if (idx + 1) % 3000 == 0:
+        fmarks.append((f, fsize, fmtime))
+        if progress:
+            progress("import", done, total)
+        if done % 3000 == 0:
             flush()
             db.commit()
-            log.info("B: %d/%d files", idx + 1, len(files))
+            log.info("B: %d/%d files", done, total)
 
     _flush_dict_tables(db, teams, leagues)
     flush()
+    _record_fingerprints(db, fmarks)
     db.commit()
     counts = {
         "B_matches": len(files),
@@ -721,22 +788,27 @@ def _phase_b(db, matches_dir, max_files=0):
     return counts
 
 
-def update_jingcai(db, data_dir=DEFAULT_DATA_DIR, phase="AB", max_files=0):
+def update_jingcai(db, data_dir=DEFAULT_DATA_DIR, phase="AB", max_files=0,
+                   incremental=False, progress=None, should_stop=None):
     counts = {}
     if phase in ("A", "AB"):
         counts.update(_phase_a(db, os.path.join(data_dir, "daily"),
-                               max_files=max_files if phase == "A" else 0))
+                               max_files=max_files if phase == "A" else 0,
+                               incremental=incremental, progress=progress,
+                               should_stop=should_stop))
         db.commit()
     if phase in ("B", "AB"):
         counts.update(_phase_b(db, os.path.join(data_dir, "matches"),
-                               max_files=max_files if phase == "B" else 0))
+                               max_files=max_files if phase == "B" else 0,
+                               incremental=incremental, progress=progress,
+                               should_stop=should_stop))
         db.commit()
     return counts
 
 
 def main():
     parser = argparse.ArgumentParser(description="Import 竞彩 data into jingcai_* tables")
-    parser.add_argument("--dir", default=os.environ.get("JINGCAI_DATA_DIR", DEFAULT_DATA_DIR))
+    parser.add_argument("--dir", default=DEFAULT_DATA_DIR)
     parser.add_argument("--phase", default="AB", choices=["A", "B", "AB"])
     parser.add_argument("--max-files", type=int, default=0,
                         help="limit files for a partial run (testing)")

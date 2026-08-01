@@ -13,6 +13,7 @@ from app.routers.users import router as users_router
 from app.routers.teams import router as teams_router
 from app.routers.matches import router as matches_router
 from app.routers.internal import router as internal_router
+from app.routers.admin import router as admin_router
 
 
 @asynccontextmanager
@@ -39,6 +40,7 @@ app.include_router(users_router, prefix="/api/v1")
 app.include_router(teams_router, prefix="/api/v1")
 app.include_router(matches_router, prefix="/api/v1")
 app.include_router(internal_router, prefix="/api/v1")
+app.include_router(admin_router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health")

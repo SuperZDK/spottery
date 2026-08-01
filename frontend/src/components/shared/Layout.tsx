@@ -8,6 +8,7 @@ import {
   Trophy,
   Users,
   BarChart3,
+  Settings,
   Sun,
   Moon,
   Monitor,
@@ -18,6 +19,7 @@ const navItems = [
   { path: "/matches", label: "赛事中心", icon: Trophy },
   { path: "/teams", label: "球队档案", icon: Users },
   { path: "/analysis", label: "数据分析", icon: BarChart3 },
+  { path: "/admin", label: "管理后台", icon: Settings, adminOnly: true },
 ]
 
 export default function Layout() {
@@ -26,6 +28,7 @@ export default function Layout() {
   const logout = useLogout()
   const user = useAuthStore((s) => s.user)
   const token = useAuthStore((s) => s.token)
+  const isAdmin = useAuthStore((s) => s.isAdmin)
   const { theme, setTheme } = useThemeStore()
 
   const cycleTheme = () => {
@@ -46,7 +49,9 @@ export default function Layout() {
           </Link>
 
           <nav className="flex items-center gap-1">
-            {navItems.map((item) => {
+            {navItems
+              .filter((item) => !item.adminOnly || isAdmin())
+              .map((item) => {
               const Icon = item.icon
               const isActive = location.pathname === item.path ||
                 (item.path !== "/" && location.pathname.startsWith(item.path))

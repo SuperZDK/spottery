@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Date, DateTime, Text, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Float, Date, DateTime, Text, UniqueConstraint, func
 
 from app.database import Base
 
@@ -311,3 +311,14 @@ class JingcaiSeasonFeature(Base):
     recent_away_draws = Column(Integer, nullable=True)
     recent_away_losses = Column(Integer, nullable=True)
     data = Column(Text, nullable=True)
+
+
+class JingcaiImportFile(Base):
+    __tablename__ = "jingcai_import_files"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    file_path = Column(String, nullable=False, unique=True)
+    size = Column(Integer, nullable=True)
+    mtime = Column(Float, nullable=True)
+    status = Column(String, nullable=False, default="ok")
+    imported_at = Column(DateTime, nullable=False, server_default=func.now())

@@ -24,6 +24,7 @@ from app.models.jingcai import (
     JingcaiInjury,
     JingcaiPlayer,
     JingcaiSeasonFeature,
+    JingcaiImportFile,
 )
 
 __all__ = [
@@ -54,4 +55,5 @@ __all__ = [
     "JingcaiInjury",
     "JingcaiPlayer",
     "JingcaiSeasonFeature",
+    "JingcaiImportFile",
 ]

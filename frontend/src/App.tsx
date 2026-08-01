@@ -10,6 +10,7 @@ import TeamsPage from "@/pages/TeamsPage"
 import TeamDetailPage from "@/pages/TeamDetailPage"
 import AnalysisPage from "@/pages/AnalysisPage"
 import ProfilePage from "@/pages/ProfilePage"
+import AdminPage from "@/pages/AdminPage"
 import NotFoundPage from "@/pages/NotFoundPage"
 
 const MatchDetailPage = lazy(() => import("@/pages/MatchDetailPage"))
@@ -67,6 +68,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <ProfilePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin"
+            element={
+              <ProtectedRoute requireAdmin>
+                <AdminPage />
               </ProtectedRoute>
             }
           />

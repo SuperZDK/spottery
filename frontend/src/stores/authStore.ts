@@ -8,6 +8,7 @@ interface AuthState {
   logout: () => void
   isAuthenticated: () => boolean
   isVIP: () => boolean
+  isAdmin: () => boolean
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -36,4 +37,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   isAuthenticated: () => !!get().token,
 
   isVIP: () => get().user?.role === "VIP",
+
+  isAdmin: () => get().user?.role === "ADMIN",
 }))
