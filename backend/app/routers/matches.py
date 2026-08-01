@@ -415,8 +415,11 @@ def _jc_odds(db: Session, match_id: int) -> dict:
             "update_time": latest.snapshot_at,
         }
 
-    def _history(model, odds_type: str, has_handicap: bool = False):
-        records = db.query(model).filter(model.match_id == match_id).order_by(model.snapshot_at.asc()).all()
+    def _history(model, odds_type: str, has_handicap: bool = False, filter_phantom: bool = False):
+        q = db.query(model).filter(model.match_id == match_id)
+        if filter_phantom:
+            q = q.filter(model.update_date.isnot(None))
+        records = q.order_by(model.snapshot_at.asc()).all()
         out = []
         for r in records:
             opts = None
@@ -461,8 +464,8 @@ def _jc_odds(db: Session, match_id: int) -> dict:
     return {
         "current": current,
         "history": {
-            "SPF": _history(JingcaiOddsSpf, "SPF"),
-            "RQSPF": _history(JingcaiOddsRqspf, "RQSPF", has_handicap=True),
+            "SPF": _history(JingcaiOddsSpf, "SPF", filter_phantom=True),
+            "RQSPF": _history(JingcaiOddsRqspf, "RQSPF", has_handicap=True, filter_phantom=True),
             "BF": _history(JingcaiOddsCrs, "BF"),
             "ZJQ": _history(JingcaiOddsTtg, "ZJQ"),
             "BQC": _history(JingcaiOddsHafu, "BQC"),

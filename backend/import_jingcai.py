@@ -134,7 +134,7 @@ def _crs_label(key):
 
 
 def _opts_to_list(options, label_map=None):
-    """options: {key: '1.85', '0', ...; key+'f': flag}. -> [{label, odds}] dropping '0'/flag '-1'."""
+    """options: {key: '1.85', '0', ...}. -> [{label, odds}] dropping non-positive odds."""
     def label_of(k):
         if callable(label_map):
             return label_map(k)
@@ -146,7 +146,7 @@ def _opts_to_list(options, label_map=None):
     for k, v in options.items():
         if k.endswith("f") or k in _EXCLUDE_KEYS:
             continue
-        if options.get(k + "f") == "-1" or v == "0":
+        if v == "0":
             continue
         val = _f(v)
         if val is None or val <= 0:
@@ -265,7 +265,6 @@ def _phase_a(db, daily_dir, max_files=0):
             if spf["home"] is not None or spf["draw"] is not None or spf["away"] is not None:
                 odds_rows.append({"match_id": mid, "odds_type": "SPF", "snapshot_at": scraped_dt,
                                   "home": spf["home"], "draw": spf["draw"], "away": spf["away"]})
-                spf_rows.append(spf)
             hc = m.get("handicap") or {}
             hodds = hc.get("odds") or {}
             rq = {"match_id": mid, "snapshot_at": scraped_dt, "handicap": hc.get("goalLine"),
@@ -274,7 +273,6 @@ def _phase_a(db, daily_dir, max_files=0):
                 odds_rows.append({"match_id": mid, "odds_type": "RQSPF", "snapshot_at": scraped_dt,
                                   "home": rq["home"], "draw": rq["draw"], "away": rq["away"],
                                   "handicap": rq["handicap"]})
-                rqspf_rows.append(rq)
         if (idx + 1) % 500 == 0:
             log.info("A: %d/%d files", idx + 1, len(files))
 
